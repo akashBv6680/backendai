@@ -1,180 +1,203 @@
-# ✅ Agentic AutoML Chat - All-in-One App
+# ✅ Enhanced Agentic AutoML with Chat, Explainability, Tuning, and PDF Export
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import requests
-import matplotlib.pyplot as plt
-import seaborn as sns
-import os
+import pickle
 import smtplib
+import seaborn as sns
+import matplotlib.pyplot as plt
+import os
+import shap
+import base64
+from fpdf import FPDF
 from email.message import EmailMessage
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.preprocessing import LabelEncoder, StandardScaler, PolynomialFeatures
+from sklearn.metrics import accuracy_score, r2_score
+from sklearn.pipeline import make_pipeline
+from sklearn.linear_model import LinearRegression, Lasso, Ridge, ElasticNet, LogisticRegression
+from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor, ExtraTreesRegressor
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, ExtraTreesClassifier, AdaBoostClassifier, AdaBoostRegressor
+from sklearn.neighbors import KNeighborsRegressor, KNeighborsClassifier
+from sklearn.svm import SVR, SVC
+from sklearn.naive_bayes import GaussianNB, MultinomialNB, ComplementNB
+from imblearn.over_sampling import SMOTE
+import xgboost as xgb
 
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import (
-    mean_squared_error, mean_absolute_error, r2_score,
-    classification_report, confusion_matrix,
-    precision_score, recall_score, f1_score
-)
-from sklearn.linear_model import LinearRegression, LogisticRegression
-from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
-from imblearn.over_sampling import SMOTE, ADASYN
-from imblearn.combine import SMOTEENN
-from imblearn.under_sampling import RandomUnderSampler
+# === Together AI Keys ===
+together_api_keys = ["<YOUR_KEY_1>", "<YOUR_KEY_2>"]
 
-from langchain.llms import Together
-from langchain.chains import LLMChain
-from langchain.prompts import PromptTemplate
+client_email = st.sidebar.text_input("📨 Enter Client Email")
 
-# === Together AI ===
-together_api_keys = [
-    "tgp_v1_ecSsk1__FlO2mB_gAaaP2i-Affa6Dv8OCVngkWzBJUY",
-    "tgp_v1_4hJBRX0XDlwnw_hhUnhP0e_lpI-u92Xhnqny2QIDAIM"
-]
-
-# === LangChain Agents ===
 def ask_agent(prompt, model, key=0):
     response = requests.post(
         "https://api.together.xyz/v1/chat/completions",
         headers={"Authorization": f"Bearer {together_api_keys[key]}"},
-        json={"model": model, "messages": [{"role": "user", "content": prompt}]}
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": prompt}],
+        }
     )
     if response.status_code == 200:
         return response.json()["choices"][0]["message"]["content"]
     return f"Error: {response.text}"
 
-def ask_data_scientist_agent(prompt):
-    return ask_agent(f"[DATA SCIENTIST] {prompt}", "mistralai/Mistral-7B-Instruct-v0.1", key=0)
+def ask_interactive_agent(role, prompt):
+    prompt = f"[{role.upper()}] {prompt}"
+    return ask_agent(prompt, "mistralai/Mistral-7B-Instruct-v0.1")
 
-def ask_ml_engineer_agent(prompt):
-    return ask_agent(f"[ML ENGINEER] {prompt}", "mistralai/Mistral-7B-Instruct-v0.1", key=1)
+def send_email_report(subject, body, to, attachment_paths=None):
+    msg = EmailMessage()
+    msg['Subject'] = subject
+    msg['From'] = st.secrets["EMAIL_ADDRESS"]
+    msg['To'] = to
+    msg.set_content(body)
+    if attachment_paths:
+        for path in attachment_paths:
+            with open(path, 'rb') as f:
+                img_data = f.read()
+            msg.add_attachment(img_data, maintype='image', subtype='png', filename=os.path.basename(path))
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+        smtp.login(st.secrets["EMAIL_ADDRESS"], st.secrets["EMAIL_PASSWORD"])
+        smtp.send_message(msg)
 
-def ask_langchain_agent(prompt):
-    llm = Together(model="mistralai/Mixtral-8x7B-Instruct-v0.1", api_key=together_api_keys[0])
-    chain = LLMChain(llm=llm, prompt=PromptTemplate(input_variables=["query"], template="You are a smart agent. {query}"))
-    return chain.run(prompt)
+# === PDF Export ===
+def generate_pdf_report(results_df, best_info):
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    pdf.cell(200, 10, txt="AutoML Model Report", ln=True, align='C')
+    pdf.ln(10)
+    for key, val in best_info.items():
+        pdf.cell(200, 10, txt=f"{key}: {val}", ln=True)
+    pdf.ln(10)
+    pdf.cell(200, 10, txt="Leaderboard:", ln=True)
+    for _, row in results_df.iterrows():
+        line = ", ".join(f"{k}: {v}" for k, v in row.items())
+        pdf.multi_cell(0, 10, line)
+    path = "automl_report.pdf"
+    pdf.output(path)
+    return path
 
-# === Streamlit UI ===
-st.title("🧠 Agentic AutoML with EDA + Email Notifications")
-uploaded_file = st.file_uploader("📤 Upload your CSV file")
+class AutoMLAgent:
+    def __init__(self, X, y, tune=False):
+        self.X_raw = X.copy()
+        self.X = pd.get_dummies(X)
+        self.y = y
+        self.classification = self.y.dtype == 'object' or len(np.unique(self.y)) <= 20
+        self.tune = tune
+        self.models = self._load_models()
+        self.scaler = StandardScaler()
+        self.best_model = None
+        self.best_score = -np.inf
+        self.best_info = {}
+        self.results = []
 
-client_email = st.text_input("📧 Enter Client Email for EDA Reports")
+    def _load_models(self):
+        return {
+            "classification": {
+                "Random Forest": RandomForestClassifier(),
+                "Gradient Boosting": GradientBoostingClassifier(),
+                "XGBoost": xgb.XGBClassifier(use_label_encoder=False, eval_metric='mlogloss'),
+            },
+            "regression": {
+                "Random Forest": RandomForestRegressor(),
+                "Gradient Boosting": GradientBoostingRegressor(),
+                "XGBoost": xgb.XGBRegressor(),
+            }
+        }["classification" if self.classification else "regression"]
 
+    def run(self):
+        X_train, X_test, y_train, y_test = train_test_split(self.X, self.y, test_size=0.2, random_state=42)
+
+        if self.classification and len(np.unique(y_train)) > 2:
+            sampler = SMOTE()
+            X_train, y_train = sampler.fit_resample(X_train, y_train)
+
+        X_train = self.scaler.fit_transform(X_train)
+        X_test = self.scaler.transform(X_test)
+
+        for name, model in self.models.items():
+            try:
+                if self.tune:
+                    param_grid = {"n_estimators": [50, 100]}
+                    model = GridSearchCV(model, param_grid, cv=3)
+                model.fit(X_train, y_train)
+                preds = model.predict(X_test)
+                score = accuracy_score(y_test, preds) if self.classification else r2_score(y_test, preds)
+                info = {"Model": name, "Score": round(score, 4)}
+                self.results.append(info)
+                if score > self.best_score:
+                    self.best_score = score
+                    self.best_model = model
+                    self.best_info = info
+            except: continue
+
+        return pd.DataFrame(self.results).sort_values(by="Score", ascending=False), self.best_info, X_test
+
+    def explain_model(self, X_sample):
+        explainer = shap.Explainer(self.best_model, X_sample)
+        shap_values = explainer(X_sample)
+        return shap_values
+
+    def save_best_model(self):
+        with open("best_model.pkl", "wb") as f:
+            pickle.dump(self.best_model, f)
+
+# === UI ===
+st.set_page_config(page_title="Agentic AutoML 2.0", layout="wide")
+st.title("🤖 Enhanced Multi-Agent AutoML System")
+
+st.sidebar.markdown("## 🤖 Talk to an AI Agent")
+agent_role = st.sidebar.selectbox("Choose Agent", ["Data Scientist", "ML Engineer"])
+user_prompt = st.sidebar.text_area("Ask your question:")
+if st.sidebar.button("💬 Ask Agent") and user_prompt:
+    with st.spinner("Agent is replying..."):
+        reply = ask_interactive_agent(agent_role, user_prompt)
+        st.sidebar.markdown(f"**Agent Response:**\n{reply}")
+
+uploaded_file = st.file_uploader("📁 Upload CSV Dataset", type="csv")
+tune_model = st.checkbox("🔍 Enable Experimental Model Tuning")
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
-    st.subheader("📊 Preview Data")
+    st.subheader("📊 Dataset Preview")
     st.dataframe(df.head())
 
-    # === Missing Values Handler ===
-    if df.isnull().sum().sum() > 0:
-        st.warning("⚠️ Missing values detected.")
-        if st.checkbox("Impute missing values (agent-assisted)?"):
-            response = ask_data_scientist_agent("Missing values detected. Impute with mean, median, mode, or drop?")
-            strategy = "mean" if "mean" in response.lower() else "median" if "median" in response.lower() else "mode" if "mode" in response.lower() else "drop"
-            for col in df.columns:
-                if df[col].isnull().any():
-                    if strategy == "mean" and df[col].dtype != 'O':
-                        df[col].fillna(df[col].mean(), inplace=True)
-                    elif strategy == "median" and df[col].dtype != 'O':
-                        df[col].fillna(df[col].median(), inplace=True)
-                    elif strategy == "mode":
-                        df[col].fillna(df[col].mode()[0], inplace=True)
-                    elif strategy == "drop":
-                        df.dropna(inplace=True)
-            st.success(f"✅ Missing values handled with strategy: {strategy}")
+    st.subheader("📉 EDA Summary")
+    st.write(df.describe())
+    st.write("Missing Values:", df.isnull().sum().sum())
 
-    st.subheader("🎯 Select Target Column")
-    target = st.selectbox("Target Variable", df.columns)
-
+    target = st.selectbox("🎯 Select Target Variable", df.columns)
     if target:
         X = df.drop(columns=[target])
         y = df[target]
 
-        # Encode categoricals
-        for col in X.select_dtypes(include='object').columns:
-            X[col] = LabelEncoder().fit_transform(X[col])
+        agent = AutoMLAgent(X, y, tune=tune_model)
+        with st.spinner("Training models..."):
+            results_df, best_info, X_sample = agent.run()
 
-        if y.dtype == 'O':
-            y = LabelEncoder().fit_transform(y)
+        st.subheader("🏆 Model Leaderboard")
+        st.dataframe(results_df)
 
-        task_type = "regression" if y.dtype in [np.float64, np.int64] and y.nunique() > 10 else "classification"
-        st.info(f"🔍 Detected task: **{task_type}**")
+        agent.save_best_model()
+        st.success(f"Best Model: {best_info['Model']} | Score: {best_info['Score']}")
 
-        if task_type == "classification":
-            class_counts = pd.Series(y).value_counts(normalize=True)
-            if class_counts.min() < 0.1:
-                st.warning("⚠️ Imbalanced dataset detected.")
-                if st.checkbox("Apply sampling (SMOTE/ADASYN/under)?"):
-                    response = ask_data_scientist_agent("Imbalanced target. Apply SMOTE, ADASYN, or under-sampling?")
-                    if "adasyn" in response.lower():
-                        sm = ADASYN()
-                    elif "smoteenn" in response.lower():
-                        sm = SMOTEENN()
-                    elif "under" in response.lower():
-                        sm = RandomUnderSampler()
-                    else:
-                        sm = SMOTE()
-                    X, y = sm.fit_resample(X, y)
-                    st.success("✅ Resampling applied.")
+        st.subheader("📌 Feature Importance (SHAP)")
+        try:
+            shap_values = agent.explain_model(X_sample[:50])
+            st.set_option('deprecation.showPyplotGlobalUse', False)
+            shap.plots.beeswarm(shap_values)
+            st.pyplot(bbox_inches='tight')
+        except:
+            st.warning("SHAP not supported for this model.")
 
-        # === Train/Test Split ===
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+        pdf_path = generate_pdf_report(results_df, best_info)
+        with open(pdf_path, "rb") as f:
+            st.download_button("📄 Download PDF Report", f, file_name="automl_report.pdf")
 
-        st.subheader("🧪 Model Training")
-        model = RandomForestRegressor() if task_type == "regression" else RandomForestClassifier()
-        model.fit(X_train, y_train)
-        y_pred = model.predict(X_test)
-
-        # === Metrics ===
-        st.subheader("📈 Model Results")
-        if task_type == "regression":
-            mse = mean_squared_error(y_test, y_pred)
-            r2 = r2_score(y_test, y_pred)
-            st.write(f"**MSE:** {mse:.4f} | **R²:** {r2:.4f}")
-        else:
-            precision = precision_score(y_test, y_pred, average="macro", zero_division=0)
-            recall = recall_score(y_test, y_pred, average="macro", zero_division=0)
-            f1 = f1_score(y_test, y_pred, average="macro", zero_division=0)
-            st.write(f"**Precision:** {precision:.4f} | **Recall:** {recall:.4f} | **F1:** {f1:.4f}")
-            st.text("Confusion Matrix:")
-            st.text(confusion_matrix(y_test, y_pred))
-
-        # === Email Report ===
-        if st.button("📩 Send Email Report"):
-            plt.figure(figsize=(8, 5))
-            if task_type == "regression":
-                sns.scatterplot(x=y_test, y=y_pred)
-                plt.xlabel("Actual")
-                plt.ylabel("Predicted")
-                plt.title("Actual vs Predicted")
-            else:
-                sns.heatmap(confusion_matrix(y_test, y_pred), annot=True, fmt="d")
-                plt.title("Confusion Matrix")
-
-            plot_path = "report_plot.png"
-            plt.savefig(plot_path)
-            plt.close()
-
-            if client_email:
-                msg = EmailMessage()
-                msg["Subject"] = "📊 AutoML Model Report"
-                msg["From"] = st.secrets["EMAIL_ADDRESS"]
-                msg["To"] = client_email
-                msg.set_content("Attached is the model evaluation report.")
-
-                with open(plot_path, "rb") as f:
-                    msg.add_attachment(f.read(), maintype="image", subtype="png", filename="report_plot.png")
-
-                with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
-                    smtp.login(st.secrets["EMAIL_ADDRESS"], st.secrets["EMAIL_PASSWORD"])
-                    smtp.send_message(msg)
-
-                st.success("✅ Report emailed!")
-
-# === Smart Agent Panel ===
-st.sidebar.subheader("🧠 LangChain Agent")
-user_query = st.sidebar.text_area("Ask the AI (optional):")
-if st.sidebar.button("Run Smart Agent") and user_query:
-    response = ask_langchain_agent(user_query)
-    st.sidebar.write(response)
+        if client_email:
+            send_email_report("AutoML Result", f"Best Model: {best_info['Model']}\nScore: {best_info['Score']}", client_email, [pdf_path])
+            st.info("📬 Email report with PDF sent to client.")
