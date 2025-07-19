@@ -27,10 +27,10 @@ from langchain.llms import Together
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 
-# === Setup API Keys ===
+# === Together AI ===
 together_api_keys = [
-    "your_together_api_key_1",
-    "your_together_api_key_2"
+    "tgp_v1_ecSsk1__FlO2mB_gAaaP2i-Affa6Dv8OCVngkWzBJUY",
+    "tgp_v1_4hJBRX0XDlwnw_hhUnhP0e_lpI-u92Xhnqny2QIDAIM"
 ]
 
 # === LangChain Agents ===
