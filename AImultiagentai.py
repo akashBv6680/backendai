@@ -176,19 +176,25 @@ class AutoMLAgent:
         return pd.DataFrame(self.results).sort_values(by="Score", ascending=False), self.best_info, X_test
 
     def explain_model(self, X_sample):
-        if SHAP_AVAILABLE:
-            try:
-                explainer = shap.Explainer(self.best_model, X_sample, check_additivity=False)
+    if SHAP_AVAILABLE:
+        try:
+            # Use TreeExplainer for tree-based models
+            if isinstance(self.best_model, (xgb.XGBClassifier, xgb.XGBRegressor,
+                                            RandomForestClassifier, RandomForestRegressor,
+                                            GradientBoostingClassifier, GradientBoostingRegressor,
+                                            ExtraTreesClassifier, ExtraTreesRegressor,
+                                            DecisionTreeClassifier, DecisionTreeRegressor)):
+                explainer = shap.TreeExplainer(self.best_model, feature_perturbation="tree_path_dependent")
+                shap_values = explainer.shap_values(X_sample, check_additivity=False)
+            else:
+                explainer = shap.Explainer(self.best_model, X_sample)
                 shap_values = explainer(X_sample)
-                return shap_values
-            except Exception as e:
-                raise RuntimeError(f"SHAP explanation failed: {e}")
-        else:
-            raise ImportError("SHAP not available")
+            return shap_values
+        except Exception as e:
+            raise RuntimeError(f"SHAP explanation failed: {e}")
+    else:
+        raise ImportError("SHAP not available")
 
-    def save_best_model(self):
-        with open("best_model.pkl", "wb") as f:
-            pickle.dump(self.best_model, f)
 
 
 # === UI ===
