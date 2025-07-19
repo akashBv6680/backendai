@@ -11,3 +11,13 @@ langchain>=0.1.14
 email-validator>=2.1.0
 langchain>=0.1.14
 langchain-community>=0.0.21
+streamlit
+shap
+xgboost
+scikit-learn
+pandas
+matplotlib
+seaborn
+fpdf
+imbalanced-learn
+requests
