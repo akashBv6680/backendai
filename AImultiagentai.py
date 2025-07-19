@@ -1,3 +1,5 @@
+
+
 # ✅ Enhanced Agentic AutoML with Chat, Explainability, Tuning, and PDF Export
 
 import streamlit as st
@@ -9,7 +11,6 @@ import smtplib
 import seaborn as sns
 import matplotlib.pyplot as plt
 import os
-import shap
 import base64
 from fpdf import FPDF
 from email.message import EmailMessage
@@ -27,8 +28,18 @@ from sklearn.naive_bayes import GaussianNB, MultinomialNB, ComplementNB
 from imblearn.over_sampling import SMOTE
 import xgboost as xgb
 
-# === Together AI Keys ===
-together_api_keys = ["<YOUR_KEY_1>", "<YOUR_KEY_2>"]
+try:
+    import shap
+    SHAP_AVAILABLE = True
+except ImportError:
+    SHAP_AVAILABLE = False
+    
+
+# === Together AI ===
+together_api_keys = [
+    "tgp_v1_ecSsk1__FlO2mB_gAaaP2i-Affa6Dv8OCVngkWzBJUY",
+    "tgp_v1_4hJBRX0XDlwnw_hhUnhP0e_lpI-u92Xhnqny2QIDAIM"
+]
 
 client_email = st.sidebar.text_input("📨 Enter Client Email")
 
@@ -139,9 +150,12 @@ class AutoMLAgent:
         return pd.DataFrame(self.results).sort_values(by="Score", ascending=False), self.best_info, X_test
 
     def explain_model(self, X_sample):
-        explainer = shap.Explainer(self.best_model, X_sample)
-        shap_values = explainer(X_sample)
-        return shap_values
+        if SHAP_AVAILABLE:
+            explainer = shap.Explainer(self.best_model, X_sample)
+            shap_values = explainer(X_sample)
+            return shap_values
+        else:
+            raise ImportError("SHAP not available")
 
     def save_best_model(self):
         with open("best_model.pkl", "wb") as f:
@@ -186,13 +200,16 @@ if uploaded_file:
         st.success(f"Best Model: {best_info['Model']} | Score: {best_info['Score']}")
 
         st.subheader("📌 Feature Importance (SHAP)")
-        try:
-            shap_values = agent.explain_model(X_sample[:50])
-            st.set_option('deprecation.showPyplotGlobalUse', False)
-            shap.plots.beeswarm(shap_values)
-            st.pyplot(bbox_inches='tight')
-        except:
-            st.warning("SHAP not supported for this model.")
+        if SHAP_AVAILABLE:
+            try:
+                shap_values = agent.explain_model(X_sample[:50])
+                st.set_option('deprecation.showPyplotGlobalUse', False)
+                shap.plots.beeswarm(shap_values)
+                st.pyplot(bbox_inches='tight')
+            except Exception as e:
+                st.warning(f"SHAP explanation failed: {e}")
+        else:
+            st.info("SHAP is not installed. Install it with `pip install shap` to enable model explanations.")
 
         pdf_path = generate_pdf_report(results_df, best_info)
         with open(pdf_path, "rb") as f:
