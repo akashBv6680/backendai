@@ -40,90 +40,110 @@ try:
 except ImportError:
     LANGCHAIN_AVAILABLE = False
 
-# === Together AI Keys ===
-together_api_keys = [
-    "tgp_v1_ecSsk1__FlO2mB_gAaaP2i-Affa6Dv8OCVngkWzBJUY",
-    "tgp_v1_4hJBRX0XDlwnw_hhUnhP0e_lpI-u92Xhnqny2QIDAIM"
-]
+# === Agent Class ===
+class AutoMLAgent:
+    def __init__(self, X, y):
+        self.X_raw = X.copy()
+        self.X = pd.get_dummies(X)
+        self.y = y
+        self.classification = self._detect_task_type()
+        self.models = self._load_models()
+        self.scaler = StandardScaler()
+        self.best_model = None
+        self.best_score = -np.inf
+        self.best_info = {}
+        self.results = []
 
-client_email = st.sidebar.text_input("📨 Enter Client Email")
+    def _detect_task_type(self):
+        return self.y.dtype == 'object' or len(np.unique(self.y)) <= 20
 
-all_visuals = []
+    def _load_models(self):
+        return {
+            "classification": {
+                "Logistic Regression": LogisticRegression(max_iter=1000),
+                "Decision Tree": DecisionTreeClassifier(),
+                "Random Forest": RandomForestClassifier(),
+                "Gradient Boosting": GradientBoostingClassifier(),
+                "Extra Trees": ExtraTreesClassifier(),
+                "AdaBoost": AdaBoostClassifier(),
+                "KNN": KNeighborsClassifier(),
+                "SVC": SVC(),
+                "Naive Bayes (Gaussian)": GaussianNB(),
+                "Naive Bayes (Multinomial)": MultinomialNB(),
+                "Naive Bayes (Complement)": ComplementNB(),
+                "XGBoost": xgb.XGBClassifier(use_label_encoder=False, eval_metric='mlogloss')
+            },
+            "regression": {
+                "Linear Regression": LinearRegression(),
+                "Lasso": Lasso(),
+                "Ridge": Ridge(),
+                "ElasticNet": ElasticNet(),
+                "Decision Tree": DecisionTreeRegressor(),
+                "Random Forest": RandomForestRegressor(),
+                "Gradient Boosting": GradientBoostingRegressor(),
+                "Extra Trees": ExtraTreesRegressor(),
+                "AdaBoost": AdaBoostRegressor(),
+                "KNN": KNeighborsRegressor(),
+                "SVR": SVR(),
+                "XGBoost": xgb.XGBRegressor(),
+                "Polynomial Linear Regression": make_pipeline(PolynomialFeatures(2), LinearRegression())
+            }
+        }["classification" if self.classification else "regression"]
 
-# === Email Report ===
-def send_email_report(subject, body, to, attachment_paths=None):
-    msg = EmailMessage()
-    msg['Subject'] = subject
-    msg['From'] = st.secrets["EMAIL_ADDRESS"]
-    msg['To'] = to
-    msg.set_content(body)
-    if attachment_paths:
-        for path in attachment_paths:
-            with open(path, 'rb') as f:
-                img_data = f.read()
-            msg.add_attachment(img_data, maintype='image', subtype='png', filename=os.path.basename(path))
-    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
-        smtp.login(st.secrets["EMAIL_ADDRESS"], st.secrets["EMAIL_PASSWORD"])
-        smtp.send_message(msg)
+    def run(self):
+        for test_size in [0.1, 0.2, 0.3]:
+            X_train, X_test, y_train, y_test = train_test_split(self.X, self.y, test_size=test_size, random_state=42)
 
-# === PDF Export ===
-def generate_pdf_report(results_df, best_info):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    pdf.cell(200, 10, txt="AutoML Model Report", ln=True, align='C')
-    pdf.ln(10)
-    for key, val in best_info.items():
-        pdf.cell(200, 10, txt=f"{key}: {val}", ln=True)
-    pdf.ln(10)
-    pdf.cell(200, 10, txt="Leaderboard:", ln=True)
-    for _, row in results_df.iterrows():
-        line = ", ".join(f"{k}: {v}" for k, v in row.items())
-        pdf.multi_cell(0, 10, line)
-    pdf.ln(5)
-    for visual in all_visuals:
-        if os.path.exists(visual):
-            pdf.image(visual, w=180)
-    path = "automl_report.pdf"
-    pdf.output(path)
-    return path
+            if self.classification and len(np.unique(y_train)) > 2:
+                sampler = SMOTE()
+                X_train, y_train = sampler.fit_resample(X_train, y_train)
 
-# === AI Agent ===
-def get_langchain_agent():
-    if not LANGCHAIN_AVAILABLE:
-        return None
-    llm = ChatOpenAI(temperature=0, model_name="gpt-4")
-    tools = [Tool(name="AskQuestion", func=lambda x: f"I received your query: {x}", description="Answer questions.")]
-    return initialize_agent(tools, llm, agent="zero-shot-react-description", verbose=True)
+            X_train = self.scaler.fit_transform(X_train)
+            X_test = self.scaler.transform(X_test)
 
-# === UI Layout ===
-st.set_page_config(page_title="Agentic AutoML 2.0", layout="wide")
-st.title("🤖 Enhanced Multi-Agent AutoML System")
+            for name, model in self.models.items():
+                try:
+                    model.fit(X_train, y_train)
+                    preds = model.predict(X_test)
+                    score = accuracy_score(y_test, preds) if self.classification else r2_score(y_test, preds)
 
-st.sidebar.markdown("## 🤖 Talk to an AI Agent")
-agent_role = st.sidebar.selectbox("Choose Agent", ["Data Scientist", "ML Engineer"])
-user_prompt = st.sidebar.text_area("Ask your question:")
-if st.sidebar.button("💬 Ask Agent") and user_prompt:
-    with st.spinner("Agent is replying..."):
-        if LANGCHAIN_AVAILABLE:
-            agent = get_langchain_agent()
-            reply = agent.run(user_prompt) if agent else "Langchain agent not available."
-        else:
-            reply = "Langchain not installed."
-        st.sidebar.markdown(f"**Agent Response:**\n{reply}")
+                    info = {
+                        "Model": name,
+                        "Score": round(score, 4),
+                        "Test Size": test_size,
+                        "Type": "Classification" if self.classification else "Regression"
+                    }
+
+                    self.results.append(info)
+                    if score > self.best_score:
+                        self.best_score = score
+                        self.best_model = model
+                        self.best_info = info
+                except Exception:
+                    continue
+
+        return pd.DataFrame(self.results).sort_values(by="Score", ascending=False), self.best_info
+
+    def save_best_model(self):
+        with open("best_model.pkl", "wb") as f:
+            pickle.dump(self.best_model, f)
+# === Streamlit UI ===
+st.set_page_config(page_title="Agentic AutoML AI", layout="wide")
+st.title("🤖 Multi-Agent AutoML System with Email Intelligence")
 
 uploaded_file = st.file_uploader("📁 Upload CSV Dataset", type="csv")
-tune_model = st.checkbox("🔍 Enable Experimental Model Tuning")
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
     st.subheader("📊 Dataset Preview")
     st.dataframe(df.head())
 
-    st.subheader("📉 EDA Summary")
+    st.subheader("📉 Basic EDA")
     st.write(df.describe())
-    st.write("Missing Values:", df.isnull().sum().sum())
+    st.write("Missing Values:")
+    st.write(df.isnull().sum())
 
-    # === EDA Visuals ===
+    all_visuals = []
+
     fig, ax = plt.subplots()
     sns.heatmap(df.isnull(), cbar=False, cmap="viridis", ax=ax)
     plt.title("Missing Data Visualization")
@@ -173,50 +193,55 @@ if uploaded_file:
             all_visuals.append(f"pie_{col}.png")
             st.pyplot(fig)
 
-    target = st.selectbox("🎯 Select Target Variable", df.columns)
-    if target:
-        X = df.drop(columns=[target])
-        y = df[target]
+    problem_detected = df.isnull().sum().any() or df.select_dtypes(include=np.number).apply(lambda x: ((x - x.mean())/x.std()).abs().gt(3).sum()).sum() > 0
 
-        @st.cache_resource(show_spinner="Training models...")
-        def get_results(X, y, tune):
-            from sklearn.ensemble import RandomForestClassifier
-            model = RandomForestClassifier()
-            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-            model.fit(X_train, y_train)
-            score = model.score(X_test, y_test)
-            results_df = pd.DataFrame([{"Model": "RandomForest", "Score": score}])
-            best_info = {"Model": "RandomForest", "Score": score}
-            with open("best_model.pkl", "wb") as f:
-                pickle.dump(model, f)
-            return model, results_df, best_info, X_test
+    if problem_detected and client_email:
+        eda_summary = """
+Dear Client,
 
-        model, results_df, best_info, X_sample = get_results(X, y, tune_model)
+Our system has completed the initial analysis of your dataset. Here are the key observations:
 
-        st.subheader("🏆 Model Leaderboard")
-        st.dataframe(results_df)
-        st.success(f"Best Model: {best_info['Model']} | Score: {best_info['Score']}")
+- ❗ Potential data quality issues found (missing values or outliers)
+- 🧹 Visuals attached for your review (see insights)
 
-        st.subheader("📌 Feature Importance (SHAP)")
-        if SHAP_AVAILABLE:
-            try:
-                explainer = shap.Explainer(model, X_sample[:50])
-                shap_values = explainer(X_sample[:50])
-                shap.summary_plot(shap_values, X_sample[:50], show=False)
-                st.pyplot(plt.gcf())
-            except Exception as e:
-                st.warning(f"SHAP explanation failed: {e}")
-        else:
-            st.info("SHAP is not installed. Install it with `pip install shap` to enable model explanations.")
+Please confirm if you'd like us to proceed with data cleaning and model training.
 
-        @st.cache_data
-        def get_pdf(results_df, best_info):
-            return generate_pdf_report(results_df, best_info)
+Regards,
+Akash
+        """
+        send_email_report("Initial Data Quality Report", eda_summary, client_email, all_visuals)
+        st.warning("Initial report emailed to client for confirmation before continuing.")
 
-        pdf_path = get_pdf(results_df, best_info)
-        with open(pdf_path, "rb") as f:
-            st.download_button("📄 Download PDF Report", f, file_name="automl_report.pdf")
+        proceed = st.checkbox("✅ Client confirmed. Proceed with model training?")
+        if proceed:
+            target = st.selectbox("🎯 Select Target Variable", df.columns)
+            if target:
+                X = df.drop(columns=[target])
+                y = df[target]
 
-        if client_email:
-            send_email_report("AutoML Result", f"Best Model: {best_info['Model']}\nScore: {best_info['Score']}", client_email, [pdf_path])
-            st.info("📬 Email report with PDF sent to client.")
+                agent = AutoMLAgent(X, y)
+                results_df, best_info = agent.run()
+
+                st.subheader("🏆 Model Leaderboard")
+                st.dataframe(results_df)
+
+                agent.save_best_model()
+                st.success(f"Best Model: {best_info['Model']} with score: {best_info['Score']}")
+
+                model_summary = f"""
+Dear Client,
+
+The AutoML process is complete. Here are the results:
+
+✅ Best Model: {best_info['Model']}
+📈 Score: {best_info['Score']}
+📊 Type: {best_info['Type']}
+🔎 Test Size: {best_info['Test Size']}
+
+Thank you for using our AI service.
+
+Regards,
+Akash
+"""
+                send_email_report("Final AutoML Model Report", model_summary, client_email)
+                st.info("📬 Final report emailed to client.")
