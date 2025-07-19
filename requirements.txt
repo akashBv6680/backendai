@@ -1,43 +1,23 @@
-streamlit>=1.30.0
-pandas>=1.5.3
-numpy>=1.23.5
-scikit-learn>=1.2.2
-matplotlib>=3.7.1
-seaborn>=0.12.2
-xgboost>=1.7.4
-imblearn>=0.0
-requests>=2.31.0
-langchain>=0.1.14
-email-validator>=2.1.0
-langchain>=0.1.14
-langchain-community>=0.0.21
-streamlit
-shap
-xgboost
-scikit-learn
-pandas
-matplotlib
-seaborn
-fpdf
-imbalanced-learn
-requests
-streamlit==1.36.0 # Or your installed version
-pandas==2.2.2 # Or your installed version
-numpy==1.26.4 # Or your installed version
-requests==2.32.3 # Or your installed version
-scikit-learn==1.5.0 # Or your installed version
-matplotlib==3.9.0 # Or your installed version
-seaborn==0.13.2 # Or your installed version
-xgboost==2.0.0 # Or your installed version
-imblearn==0.12.2 # For imblearn.over_sampling.SMOTE, usually from imbalanced-learn
-langchain==0.2.7 # Or your installed version
-langchain-community==0.2.7 # Or your installed version
-langchain-together==0.1.3 # The corrected package for TogetherEmbeddings
-tiktoken==0.7.0 # Often a dependency for Langchain's tokenizers
-faiss-cpu==1.8.0 # For FAISS vector store
-pyopenssl==24.1.0 # Common dependency for requests/urllib3, if you encounter SSL issues
-cryptography==42.0.8 # Common dependency for pyopenssl
+streamlit==1.36.0 # Placeholder, adjust to your actual Streamlit version
+pandas==2.2.2 # Placeholder, adjust to your actual Pandas version
+numpy==1.26.4 # Placeholder, adjust to your actual NumPy version
+requests==2.32.3 # Placeholder, adjust to your actual Requests version
+scikit-learn==1.5.0 # Placeholder, adjust to your actual scikit-learn version
+matplotlib==3.9.0 # Placeholder, adjust to your actual Matplotlib version
+seaborn==0.13.2 # Placeholder, adjust to your actual Seaborn version
+xgboost==2.0.0 # Placeholder, adjust to your actual XGBoost version
+imbalanced-learn==0.12.2 # For imblearn.over_sampling.SMOTE, package name is imbalanced-learn
+langchain==0.2.7 # Placeholder, adjust to your actual Langchain version
+langchain-community==0.2.7 # Placeholder, adjust to your actual Langchain-Community version
+langchain-core==0.2.14 # Needed for langchain_core.documents.Document
+rich==14.0.0 # As seen in your install log
+markdown-it-py==3.0.0 # As seen in your install log
+mdurl==0.1.2 # As seen in your install log
+pygments==2.19.2 # As seen in your install log
+typing-extensions==4.14.1 # As seen in your install log
+# Note: langchain-together is explicitly removed from your code, so it's not included here.
 
-# You might also need these if they are implicitly used or for specific features:
-# python-dotenv # If you use a .env file for secrets
-# gunicorn # For deploying on some platforms like Heroku
+# Optional but often useful dependencies:
+# pyopenssl
+# cryptography
+# protobuf # Often a dependency for various ML libraries or google libraries
