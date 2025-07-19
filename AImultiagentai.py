@@ -32,6 +32,14 @@ try:
 except ImportError:
     SHAP_AVAILABLE = False
 
+try:
+    import langchain
+    from langchain.chat_models import ChatOpenAI
+    from langchain.agents import initialize_agent, Tool
+    LANGCHAIN_AVAILABLE = True
+except ImportError:
+    LANGCHAIN_AVAILABLE = False
+
 # === Together AI Keys ===
 together_api_keys = [
     "tgp_v1_ecSsk1__FlO2mB_gAaaP2i-Affa6Dv8OCVngkWzBJUY",
@@ -42,23 +50,7 @@ client_email = st.sidebar.text_input("📨 Enter Client Email")
 
 all_visuals = []
 
-def ask_agent(prompt, model, key=0):
-    response = requests.post(
-        "https://api.together.xyz/v1/chat/completions",
-        headers={"Authorization": f"Bearer {together_api_keys[key]}"},
-        json={
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-        }
-    )
-    if response.status_code == 200:
-        return response.json()["choices"][0]["message"]["content"]
-    return f"Error: {response.text}"
-
-def ask_interactive_agent(role, prompt):
-    prompt = f"[{role.upper()}] {prompt}"
-    return ask_agent(prompt, "mistralai/Mistral-7B-Instruct-v0.1")
-
+# === Email Report ===
 def send_email_report(subject, body, to, attachment_paths=None):
     msg = EmailMessage()
     msg['Subject'] = subject
@@ -96,7 +88,15 @@ def generate_pdf_report(results_df, best_info):
     pdf.output(path)
     return path
 
-# === UI ===
+# === AI Agent ===
+def get_langchain_agent():
+    if not LANGCHAIN_AVAILABLE:
+        return None
+    llm = ChatOpenAI(temperature=0, model_name="gpt-4")
+    tools = [Tool(name="AskQuestion", func=lambda x: f"I received your query: {x}", description="Answer questions.")]
+    return initialize_agent(tools, llm, agent="zero-shot-react-description", verbose=True)
+
+# === UI Layout ===
 st.set_page_config(page_title="Agentic AutoML 2.0", layout="wide")
 st.title("🤖 Enhanced Multi-Agent AutoML System")
 
@@ -105,7 +105,11 @@ agent_role = st.sidebar.selectbox("Choose Agent", ["Data Scientist", "ML Enginee
 user_prompt = st.sidebar.text_area("Ask your question:")
 if st.sidebar.button("💬 Ask Agent") and user_prompt:
     with st.spinner("Agent is replying..."):
-        reply = ask_interactive_agent(agent_role, user_prompt)
+        if LANGCHAIN_AVAILABLE:
+            agent = get_langchain_agent()
+            reply = agent.run(user_prompt) if agent else "Langchain agent not available."
+        else:
+            reply = "Langchain not installed."
         st.sidebar.markdown(f"**Agent Response:**\n{reply}")
 
 uploaded_file = st.file_uploader("📁 Upload CSV Dataset", type="csv")
@@ -114,55 +118,6 @@ if uploaded_file:
     df = pd.read_csv(uploaded_file)
     st.subheader("📊 Dataset Preview")
     st.dataframe(df.head())
-
-    fig, ax = plt.subplots()
-    sns.heatmap(df.isnull(), cbar=False, cmap="viridis", ax=ax)
-    plt.title("Missing Data Visualization")
-    plt.tight_layout()
-    plt.savefig("eda_missing.png")
-    all_visuals.append("eda_missing.png")
-    st.pyplot(fig)
-
-    st.subheader("📈 Client-Friendly Visual Insights")
-    num_cols = df.select_dtypes(include=np.number).columns
-    cat_cols = df.select_dtypes(include='object').columns
-
-    if not num_cols.empty:
-        st.markdown("### 🔢 Numeric Feature Distributions")
-        for col in num_cols:
-            fig, ax = plt.subplots()
-            df[col].hist(ax=ax, bins=20, color='skyblue', edgecolor='black')
-            ax.set_title(f"Histogram of {col}")
-            plt.savefig(f"hist_{col}.png")
-            all_visuals.append(f"hist_{col}.png")
-            st.pyplot(fig)
-
-        st.markdown("### 🧮 Box Plots (Outlier Detection)")
-        for col in num_cols:
-            fig, ax = plt.subplots()
-            sns.boxplot(data=df, x=col, ax=ax, color='lightcoral')
-            ax.set_title(f"Box Plot of {col}")
-            plt.savefig(f"box_{col}.png")
-            all_visuals.append(f"box_{col}.png")
-            st.pyplot(fig)
-
-    if not cat_cols.empty:
-        st.markdown("### 🧾 Categorical Feature Breakdown")
-        for col in cat_cols:
-            fig, ax = plt.subplots()
-            df[col].value_counts().plot(kind='bar', ax=ax, color='lightgreen')
-            ax.set_title(f"Bar Chart of {col}")
-            plt.savefig(f"bar_{col}.png")
-            all_visuals.append(f"bar_{col}.png")
-            st.pyplot(fig)
-
-            fig, ax = plt.subplots()
-            df[col].value_counts().plot(kind='pie', ax=ax, autopct='%1.1f%%', startangle=90)
-            ax.set_ylabel("")
-            ax.set_title(f"Pie Chart of {col}")
-            plt.savefig(f"pie_{col}.png")
-            all_visuals.append(f"pie_{col}.png")
-            st.pyplot(fig)
 
     st.subheader("📉 EDA Summary")
     st.write(df.describe())
@@ -184,7 +139,6 @@ if uploaded_file:
 
         st.subheader("🏆 Model Leaderboard")
         st.dataframe(results_df)
-
         st.success(f"Best Model: {best_info['Model']} | Score: {best_info['Score']}")
 
         st.subheader("📌 Feature Importance (SHAP)")
