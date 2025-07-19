@@ -4,7 +4,6 @@ from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 
-# === Import backend logic ===
 from Agentic_Automl_Chat import (
     handle_missing_values,
     detect_task_type,
@@ -12,8 +11,12 @@ from Agentic_Automl_Chat import (
     regression_metrics,
     classification_metrics,
     send_email_report,
+    ask_data_scientist_agent,
+    ask_ml_engineer_agent,
+    ask_langchain_agent,
     client_email
 )
+
 
 st.set_page_config(page_title="Agentic AutoML Chat", layout="wide")
 st.title("🤖 Agentic AutoML System with Multi-Agent Support")
