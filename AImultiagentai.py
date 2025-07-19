@@ -27,19 +27,16 @@ import xgboost as xgb
 from langchain.llms import Together
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
-from langchain_community.document_loaders import DataFrameLoader
-# FIX: Changed import path for TogetherEmbeddings
-from langchain_together import TogetherEmbeddings # <--- CORRECTED IMPORT
-from langchain.vectorstores import FAISS
-from langchain.chains.Youtubeing import load_qa_chain
-from langchain_core.documents import Document # Added for creating custom documents in DatasetAgent
-
-# ... (rest of your code) ...
+from langchain_community.document_loaders import DataFrameLoader # Still useful for converting DF to LangChain Documents if needed for other ops
+# from langchain_together import TogetherEmbeddings # REMOVED: No longer needed if not using embeddings
+# from langchain.vectorstores import FAISS # REMOVED: No longer needed if not using embeddings
+from langchain.chains.Youtubeing import load_qa_chain # Can still be used with a simple "stuff" chain
+from langchain_core.documents import Document # Still useful if you manually create documents from DF info
 
 # === Together AI ===
 together_api_keys = [
     "tgp_v1_ecSsk1__FlO2mB_gAaaP2i-Affa6Dv8OCVngkWzBJUY",
-    "tgp_v1_4hJBRX0XDlwnw_hhUnhP0e_lpI-u92Xhnq2QIDAIM" # Corrected key if there was a typo, ensure these are valid
+    "tgp_v1_4hJBRX0XDlwnw_hhUnhP0e_lpI-u92Xhnq2QIDAIM"
 ]
 
 client_email = st.sidebar.text_input("Enter Client Email")
@@ -105,33 +102,26 @@ class AutoMLAgent:
         self.results = []
 
     def _detect_task_type(self):
-        # Increased threshold for classification detection to handle more unique values
-        # as categorical, for better flexibility in target variable detection.
-        # However, for a target variable, it's typically binary or a few classes.
-        # Reverting to typical classification threshold if not explicitly multi-class.
-        # A common practice is to check the number of unique values vs. total rows.
         if self.y.dtype == 'object':
             return True
         unique_ratio = len(np.unique(self.y)) / len(self.y)
-        # If unique values are less than 20% of total rows and less than, say, 50 unique values,
-        # it's likely classification. Adjust 20 and 50 based on domain knowledge.
         return len(np.unique(self.y)) <= 20 or unique_ratio < 0.2
 
     def _load_models(self):
         return {
             "classification": {
-                "Logistic Regression": LogisticRegression(max_iter=1000, solver='liblinear'), # Added solver for robustness
+                "Logistic Regression": LogisticRegression(max_iter=1000, solver='liblinear'),
                 "Decision Tree": DecisionTreeClassifier(random_state=42),
                 "Random Forest": RandomForestClassifier(random_state=42),
                 "Gradient Boosting": GradientBoostingClassifier(random_state=42),
                 "Extra Trees": ExtraTreesClassifier(random_state=42),
                 "AdaBoost": AdaBoostClassifier(random_state=42),
                 "KNN": KNeighborsClassifier(),
-                "SVC": SVC(probability=True, random_state=42), # probability=True for predict_proba if needed
+                "SVC": SVC(probability=True, random_state=42),
                 "Naive Bayes (Gaussian)": GaussianNB(),
                 "Naive Bayes (Multinomial)": MultinomialNB(),
                 "Naive Bayes (Complement)": ComplementNB(),
-                "XGBoost": xgb.XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42) # Changed eval_metric to logloss for consistency
+                "XGBoost": xgb.XGBClassifier(use_label_encoder=False, eval_metric='logloss', random_state=42)
             },
             "regression": {
                 "Linear Regression": LinearRegression(),
@@ -151,45 +141,32 @@ class AutoMLAgent:
         }["classification" if self.classification else "regression"]
 
     def run(self):
-        # Ensure y is encoded if classification and not numeric already
         if self.classification and self.y.dtype == 'object':
             le = LabelEncoder()
             self.y = le.fit_transform(self.y)
-            # Store the encoder if you need to reverse transform predictions later
             self.label_encoder = le
 
         for test_size in [0.1, 0.2, 0.3]:
-            # Use stratify for classification if applicable to maintain class balance
             if self.classification:
                 X_train, X_test, y_train, y_test = train_test_split(self.X, self.y, test_size=test_size, random_state=42, stratify=self.y)
             else:
                 X_train, X_test, y_train, y_test = train_test_split(self.X, self.y, test_size=test_size, random_state=42)
 
-            # SMOTE only for classification with multiple classes (and if needed)
-            # It's better to apply SMOTE conditionally based on class imbalance rather than always.
-            # For simplicity, keeping it as is for now, but in production, check imbalance first.
             if self.classification and len(np.unique(y_train)) > 2:
-                # Ensure SMOTE is only applied if there are at least 2 samples of each class after train_test_split
                 try:
                     sampler = SMOTE(random_state=42)
                     X_train, y_train = sampler.fit_resample(X_train, y_train)
                 except ValueError as e:
                     st.warning(f"SMOTE could not be applied due to insufficient samples in some classes: {e}")
 
-
-            # Only scale numerical features. pd.get_dummies converts categorical to numerical,
-            # so scaling the whole X is generally fine for the models selected.
-            # However, for interpretability, you might want to scale only numerical columns from X_raw.
-            # For this pipeline, scaling the entire X (after get_dummies) is typical.
             X_train_scaled = self.scaler.fit_transform(X_train)
             X_test_scaled = self.scaler.transform(X_test)
 
             for name, model in self.models.items():
                 try:
-                    # Specific checks for models that don't handle sparse matrices or specific data types
                     if isinstance(model, (MultinomialNB, ComplementNB)) and (X_train_scaled < 0).any():
                         st.info(f"Skipping {name} as it requires non-negative input and data contains negative values after scaling.")
-                        continue # These Naive Bayes variants generally expect non-negative features
+                        continue
 
                     model.fit(X_train_scaled, y_train)
                     preds = model.predict(X_test_scaled)
@@ -208,8 +185,6 @@ class AutoMLAgent:
                         self.best_model = model
                         self.best_info = info
                 except Exception as e:
-                    # This catch-all can hide specific issues. In a real-world app, log specific errors.
-                    # For now, print to console for debugging.
                     print(f"Error training {name} with test size {test_size}: {e}")
                     continue
 
@@ -224,65 +199,50 @@ class AutoMLAgent:
             st.error(f"Failed to save model: {e}")
 
 
-# === NEW: DatasetAgent Class ===
+# === MODIFIED: DatasetAgent Class (No Embeddings) ===
 class DatasetAgent:
     def __init__(self, dataframe: pd.DataFrame):
         self.dataframe = dataframe
-        # Ensure the API key is passed correctly to TogetherEmbeddings
-        self.embeddings = TogetherEmbeddings(together_api_key=together_api_keys[0], model="togethercomputer/m2-bert-80M-8k-retrieval")
-        self.vector_store = self._create_vector_store()
         self.llm = Together(model="mistralai/Mixtral-8x7B-Instruct-v0.1", together_api_key=together_api_keys[0])
+        # We can still use load_qa_chain but it will operate in "stuff" mode,
+        # meaning it directly "stuffs" the provided context into the prompt.
+        # No retrieval is happening here.
         self.qa_chain = load_qa_chain(self.llm, chain_type="stuff")
 
-    def _create_vector_store(self):
-        # Convert DataFrame to a list of Langchain Documents
-        # For better context, you might want to create documents that contain
-        # information about columns, their types, unique values, missing values, etc.
-        # This simple approach treats each row as a document.
-        # Let's improve this to provide more structural information.
+    def _get_dataframe_summary(self):
+        """Generates a text summary of the DataFrame's structure and a few rows."""
+        summary_parts = []
 
-        # Option 1: Each row as a document (current approach, but can be limited for meta-questions)
-        # loader = DataFrameLoader(self.dataframe, page_content_column=self.dataframe.columns[0])
-        # documents = loader.load()
-
-        # Option 2: Create documents describing the dataset's structure and content
-        documents = []
-        # Add overall description
-        documents.append(Document(page_content=f"This dataset has {self.dataframe.shape[0]} rows and {self.dataframe.shape[1]} columns."))
-
-        # Add column descriptions
+        summary_parts.append(f"The dataset has {self.dataframe.shape[0]} rows and {self.dataframe.shape[1]} columns.")
+        summary_parts.append("\n**Columns and their types/statistics:**")
         for col in self.dataframe.columns:
-            col_info = f"Column '{col}': Data type is {self.dataframe[col].dtype}."
+            col_info = f"- Column '{col}' (Type: {self.dataframe[col].dtype})"
             if self.dataframe[col].isnull().any():
                 missing_count = self.dataframe[col].isnull().sum()
-                col_info += f" It has {missing_count} missing values ({missing_count/self.dataframe.shape[0]*100:.2f}%)."
-            if self.dataframe[col].dtype == 'object' or self.dataframe[col].nunique() < 20: # Treat as categorical if few unique values
+                col_info += f", Missing: {missing_count} ({missing_count/self.dataframe.shape[0]*100:.2f}%)"
+            if self.dataframe[col].dtype == 'object' or self.dataframe[col].nunique() < 20:
                 unique_vals = self.dataframe[col].nunique()
                 top_5_unique = self.dataframe[col].value_counts().head(5).index.tolist()
-                col_info += f" It has {unique_vals} unique values. Top 5: {top_5_unique}."
+                col_info += f", Unique Values: {unique_vals}, Top 5: {top_5_unique}"
             elif self.dataframe[col].dtype in ['int64', 'float64']:
-                col_info += f" Min: {self.dataframe[col].min():.2f}, Max: {self.dataframe[col].max():.2f}, Mean: {self.dataframe[col].mean():.2f}, Median: {self.dataframe[col].median():.2f}."
-            documents.append(Document(page_content=col_info, metadata={"column": col}))
+                col_info += f", Min: {self.dataframe[col].min():.2f}, Max: {self.dataframe[col].max():.2f}, Mean: {self.dataframe[col].mean():.2f}"
+            summary_parts.append(col_info)
 
-        # If the dataframe is not too large, you could also add some sample rows
-        # For very large dataframes, this might consume too much memory or token limits.
-        # For demonstration, let's add a few sample rows as separate documents.
-        # You might need to adjust this based on your dataset size and Together AI's context window.
-        if self.dataframe.shape[0] < 1000: # Example limit
-            for i, row in self.dataframe.head(10).iterrows(): # Take first 10 rows as samples
-                row_content = f"Sample Row {i+1}: {row.to_dict()}"
-                documents.append(Document(page_content=row_content, metadata={"row_index": i}))
+        # Add a few sample rows (adjust based on your LLM's context window limits)
+        summary_parts.append("\n**First 5 rows of the dataset:**")
+        summary_parts.append(self.dataframe.head().to_markdown(index=False))
 
-
-        return FAISS.from_documents(documents, self.embeddings)
+        return "\n".join(summary_parts)
 
     def answer_question(self, query: str):
-        # Search for relevant documents in the vector store
-        # Increased k to potentially provide more context from different document types (column info, sample rows)
-        docs = self.vector_store.similarity_search(query, k=10)
+        # The "context" here will be the generated DataFrame summary, not retrieved documents
+        df_context = self._get_dataframe_summary()
+
+        # Create a single Langchain Document object from the DataFrame summary
+        # This replaces the need for FAISS and similarity search
+        context_document = Document(page_content=df_context, metadata={"source": "dataframe_summary"})
 
         try:
-            # Provide a specific prompt to the QA chain for better answers about dataset structure
             qa_template = """
             You are an expert data analyst. Based on the following dataset information, answer the question comprehensively.
             If the answer is not available in the provided context, state that you don't have enough information.
@@ -295,8 +255,8 @@ class DatasetAgent:
             Answer:
             """
             qa_prompt = PromptTemplate(template=qa_template, input_variables=["context", "question"])
-            qa_chain_with_prompt = load_qa_chain(self.llm, chain_type="stuff", prompt=qa_prompt)
-            response = qa_chain_with_prompt.run(input_documents=docs, question=query)
+            # Pass the single context document directly to the chain
+            response = self.qa_chain.run(input_documents=[context_document], question=query)
             return response
         except Exception as e:
             st.error(f"Error processing your question: {e}. Please try rephrasing.")
@@ -313,7 +273,6 @@ uploaded_file = st.file_uploader("📁 Upload CSV Dataset", type="csv", key="csv
 # --- IMPORTANT: Handle file upload and state reset ---
 if uploaded_file is not None:
     # Check if a new file has been uploaded compared to the one in session state
-    # This helps in resetting the state ONLY when a new file comes in.
     if 'last_uploaded_file_id' not in st.session_state or st.session_state.last_uploaded_file_id != uploaded_file.file_id:
         st.session_state.last_uploaded_file_id = uploaded_file.file_id
         st.session_state.clear() # Clear all session state to reset the app completely for a new file
@@ -322,11 +281,8 @@ if uploaded_file is not None:
         st.session_state.df = pd.read_csv(uploaded_file) # Store new dataframe
 
         st.success("New dataset uploaded! Application state reset.")
-        # Rerun to ensure all components re-render with fresh state
         st.experimental_rerun()
     else:
-        # If the same file is uploaded again (e.g., due to Streamlit re-run),
-        # just ensure df is loaded if not already in session_state
         if 'df' not in st.session_state:
             st.session_state.df = pd.read_csv(uploaded_file)
             st.warning("Same file re-uploaded. Using existing data.")
@@ -346,8 +302,6 @@ if 'df' in st.session_state and st.session_state.df is not None:
 
     all_visuals = []
 
-    # Ensure plot directories exist or save to temp files
-    # Create a temporary directory for plots if needed
     plot_dir = "temp_plots"
     os.makedirs(plot_dir, exist_ok=True)
 
@@ -359,7 +313,7 @@ if 'df' in st.session_state and st.session_state.df is not None:
     plt.savefig(missing_plot_path)
     all_visuals.append(missing_plot_path)
     st.pyplot(fig)
-    plt.close(fig) # Close plot to free memory
+    plt.close(fig)
 
     st.subheader("📈 Client-Friendly Visual Insights")
     num_cols = df.select_dtypes(include=np.number).columns
@@ -413,9 +367,8 @@ if 'df' in st.session_state and st.session_state.df is not None:
 
     problem_detected = df.isnull().sum().any() or df.select_dtypes(include=np.number).apply(lambda x: ((x - x.mean())/x.std()).abs().gt(3).sum()).sum() > 0
 
-    # Ensure client_email is provided for the initial report
     if problem_detected and client_email:
-        if 'initial_report_sent' not in st.session_state: # Send only once per dataset upload
+        if 'initial_report_sent' not in st.session_state:
             eda_summary = """
 Dear Client,
 
@@ -431,11 +384,10 @@ Akash
             """
             send_email_report("Initial Data Quality Report", eda_summary, client_email, all_visuals)
             st.warning("Initial report emailed to client for confirmation before continuing.")
-            st.session_state.initial_report_sent = True # Mark as sent
+            st.session_state.initial_report_sent = True
     elif not client_email:
         st.warning("Enter client email in the sidebar to enable email notifications.")
 
-    # Always show the checkbox if problem detected, but only allow progression if confirmed
     if problem_detected:
         proceed = st.checkbox("✅ Client confirmed. Proceed with model training?", key="proceed_training")
         if proceed:
@@ -444,7 +396,6 @@ Akash
                 X = df.drop(columns=[target])
                 y = df[target]
 
-                # Run AutoML only once or when target changes
                 if 'automl_results' not in st.session_state or st.session_state.get('last_target') != target:
                     st.session_state.last_target = target
                     st.info("Running AutoML models... This may take a moment.")
@@ -453,7 +404,7 @@ Akash
 
                     st.session_state.automl_results = results_df
                     st.session_state.best_model_info = best_info
-                    agent.save_best_model() # Save the model after training
+                    agent.save_best_model()
 
                     model_summary = f"""
 Dear Client,
@@ -485,7 +436,7 @@ Akash
 
     # Initialize DatasetAgent only once per loaded dataframe
     if "dataset_agent" not in st.session_state:
-        st.session_state.dataset_agent = DatasetAgent(df) # Use 'df' from session_state
+        st.session_state.dataset_agent = DatasetAgent(df)
 
     # Display chat messages from history on app rerun
     for message in st.session_state.messages:
@@ -494,24 +445,18 @@ Akash
 
     # Accept user input
     if prompt := st.chat_input("Ask me about the dataset...", key="chat_input"):
-        # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt})
-        # Display user message in chat message container
         with st.chat_message("user"):
             st.markdown(prompt)
 
         with st.chat_message("assistant"):
             with st.spinner("Thinking..."):
-                # Use the existing DatasetAgent from session state
                 response = st.session_state.dataset_agent.answer_question(prompt)
                 st.markdown(response)
-                # Add assistant response to chat history
                 st.session_state.messages.append({"role": "assistant", "content": response})
 
 else:
-    # This block runs if no file is uploaded or after st.session_state.clear()
     st.info("Upload a CSV file to begin the AutoML process and interact with the Dataset Agent.")
-    # Clear any residual states that might confuse the user on a fresh start
     if 'df' in st.session_state:
         del st.session_state.df
     if 'dataset_agent' in st.session_state:
