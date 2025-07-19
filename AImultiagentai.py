@@ -95,7 +95,7 @@ class AutoMLAgent:
         self.X_raw = X.copy()
         self.X = pd.get_dummies(X)
         self.y = y
-        self.classification = self.y.dtype == 'object' or len(np.unique(self.y)) <= 20
+        self.classification = self._detect_task_type()
         self.tune = tune
         self.models = self._load_models()
         self.scaler = StandardScaler()
@@ -104,45 +104,74 @@ class AutoMLAgent:
         self.best_info = {}
         self.results = []
 
+    def _detect_task_type(self):
+        return self.y.dtype == 'object' or len(np.unique(self.y)) <= 20
+
     def _load_models(self):
         return {
             "classification": {
+                "Logistic Regression": LogisticRegression(max_iter=1000),
+                "Decision Tree": DecisionTreeClassifier(),
                 "Random Forest": RandomForestClassifier(),
                 "Gradient Boosting": GradientBoostingClassifier(),
-                "XGBoost": xgb.XGBClassifier(use_label_encoder=False, eval_metric='mlogloss'),
+                "Extra Trees": ExtraTreesClassifier(),
+                "AdaBoost": AdaBoostClassifier(),
+                "KNN": KNeighborsClassifier(),
+                "SVC": SVC(),
+                "Naive Bayes (Gaussian)": GaussianNB(),
+                "Naive Bayes (Multinomial)": MultinomialNB(),
+                "Naive Bayes (Complement)": ComplementNB(),
+                "XGBoost": xgb.XGBClassifier(use_label_encoder=False, eval_metric='mlogloss')
             },
             "regression": {
+                "Linear Regression": LinearRegression(),
+                "Lasso": Lasso(),
+                "Ridge": Ridge(),
+                "ElasticNet": ElasticNet(),
+                "Decision Tree": DecisionTreeRegressor(),
                 "Random Forest": RandomForestRegressor(),
                 "Gradient Boosting": GradientBoostingRegressor(),
+                "Extra Trees": ExtraTreesRegressor(),
+                "AdaBoost": AdaBoostRegressor(),
+                "KNN": KNeighborsRegressor(),
+                "SVR": SVR(),
                 "XGBoost": xgb.XGBRegressor(),
+                "Polynomial Linear Regression": make_pipeline(PolynomialFeatures(2), LinearRegression())
             }
         }["classification" if self.classification else "regression"]
 
     def run(self):
-        X_train, X_test, y_train, y_test = train_test_split(self.X, self.y, test_size=0.2, random_state=42)
+        for test_size in [0.1, 0.2, 0.3]:
+            X_train, X_test, y_train, y_test = train_test_split(self.X, self.y, test_size=test_size, random_state=42)
 
-        if self.classification and len(np.unique(y_train)) > 2:
-            sampler = SMOTE()
-            X_train, y_train = sampler.fit_resample(X_train, y_train)
+            if self.classification and len(np.unique(y_train)) > 2:
+                sampler = SMOTE()
+                X_train, y_train = sampler.fit_resample(X_train, y_train)
 
-        X_train = self.scaler.fit_transform(X_train)
-        X_test = self.scaler.transform(X_test)
+            X_train = self.scaler.fit_transform(X_train)
+            X_test = self.scaler.transform(X_test)
 
-        for name, model in self.models.items():
-            try:
-                if self.tune:
-                    param_grid = {"n_estimators": [50, 100]}
-                    model = GridSearchCV(model, param_grid, cv=3)
-                model.fit(X_train, y_train)
-                preds = model.predict(X_test)
-                score = accuracy_score(y_test, preds) if self.classification else r2_score(y_test, preds)
-                info = {"Model": name, "Score": round(score, 4)}
-                self.results.append(info)
-                if score > self.best_score:
-                    self.best_score = score
-                    self.best_model = model
-                    self.best_info = info
-            except: continue
+            for name, model in self.models.items():
+                try:
+                    model.fit(X_train, y_train)
+                    preds = model.predict(X_test)
+                    score = accuracy_score(y_test, preds) if self.classification else r2_score(y_test, preds)
+
+                    info = {
+                        "Model": name,
+                        "Score": round(score, 4),
+                        "Test Size": test_size,
+                        "Type": "Classification" if self.classification else "Regression"
+                    }
+
+                    self.results.append(info)
+
+                    if score > self.best_score:
+                        self.best_score = score
+                        self.best_model = model
+                        self.best_info = info
+                except Exception as e:
+                    continue
 
         return pd.DataFrame(self.results).sort_values(by="Score", ascending=False), self.best_info, X_test
 
@@ -160,6 +189,7 @@ class AutoMLAgent:
     def save_best_model(self):
         with open("best_model.pkl", "wb") as f:
             pickle.dump(self.best_model, f)
+
 
 # === UI ===
 st.set_page_config(page_title="Agentic AutoML 2.0", layout="wide")
