@@ -199,9 +199,6 @@ class AutoMLAgent:
             pickle.dump(self.best_model, f)
 
 # === UI ===
-# (UI code remains unchanged)
-
-# === UI ===
 st.set_page_config(page_title="Agentic AutoML 2.0", layout="wide")
 st.title("🤖 Enhanced Multi-Agent AutoML System")
 
@@ -243,9 +240,8 @@ if uploaded_file:
         if SHAP_AVAILABLE:
             try:
                 shap_values = agent.explain_model(X_sample[:50])
-                st.set_option('deprecation.showPyplotGlobalUse', False)
-                shap.plots.beeswarm(shap_values)
-                st.pyplot(bbox_inches='tight')
+                shap.summary_plot(shap_values, X_sample[:50], show=False)
+                st.pyplot(plt.gcf())
             except Exception as e:
                 st.warning(f"SHAP explanation failed: {e}")
         else:
