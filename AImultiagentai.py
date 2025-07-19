@@ -40,12 +40,10 @@ try:
 except ImportError:
     LANGCHAIN_AVAILABLE = False
 
-from automl_agent import AutoMLAgent  # Make sure this file exists or adjust import path
-
 # === Together AI Keys ===
 together_api_keys = [
-    st.secrets.get("TOGETHER_API_KEY_1", "tgp_v1_ecSsk1__FlO2mB_gAaaP2i-Affa6Dv8OCVngkWzBJUY"),
-    st.secrets.get("TOGETHER_API_KEY_2", "tgp_v1_4hJBRX0XDlwnw_hhUnhP0e_lpI-u92Xhnqny2QIDAIM")
+    "tgp_v1_ecSsk1__FlO2mB_gAaaP2i-Affa6Dv8OCVngkWzBJUY",
+    "tgp_v1_4hJBRX0XDlwnw_hhUnhP0e_lpI-u92Xhnqny2QIDAIM"
 ]
 
 client_email = st.sidebar.text_input("📨 Enter Client Email")
@@ -125,6 +123,56 @@ if uploaded_file:
     st.write(df.describe())
     st.write("Missing Values:", df.isnull().sum().sum())
 
+    # === EDA Visuals ===
+    fig, ax = plt.subplots()
+    sns.heatmap(df.isnull(), cbar=False, cmap="viridis", ax=ax)
+    plt.title("Missing Data Visualization")
+    plt.tight_layout()
+    plt.savefig("eda_missing.png")
+    all_visuals.append("eda_missing.png")
+    st.pyplot(fig)
+
+    st.subheader("📈 Client-Friendly Visual Insights")
+    num_cols = df.select_dtypes(include=np.number).columns
+    cat_cols = df.select_dtypes(include='object').columns
+
+    if not num_cols.empty:
+        st.markdown("### 🔢 Numeric Feature Distributions")
+        for col in num_cols:
+            fig, ax = plt.subplots()
+            df[col].hist(ax=ax, bins=20, color='skyblue', edgecolor='black')
+            ax.set_title(f"Histogram of {col}")
+            plt.savefig(f"hist_{col}.png")
+            all_visuals.append(f"hist_{col}.png")
+            st.pyplot(fig)
+
+        st.markdown("### 🧮 Box Plots (Outlier Detection)")
+        for col in num_cols:
+            fig, ax = plt.subplots()
+            sns.boxplot(data=df, x=col, ax=ax, color='lightcoral')
+            ax.set_title(f"Box Plot of {col}")
+            plt.savefig(f"box_{col}.png")
+            all_visuals.append(f"box_{col}.png")
+            st.pyplot(fig)
+
+    if not cat_cols.empty:
+        st.markdown("### 🧾 Categorical Feature Breakdown")
+        for col in cat_cols:
+            fig, ax = plt.subplots()
+            df[col].value_counts().plot(kind='bar', ax=ax, color='lightgreen')
+            ax.set_title(f"Bar Chart of {col}")
+            plt.savefig(f"bar_{col}.png")
+            all_visuals.append(f"bar_{col}.png")
+            st.pyplot(fig)
+
+            fig, ax = plt.subplots()
+            df[col].value_counts().plot(kind='pie', ax=ax, autopct='%1.1f%%', startangle=90)
+            ax.set_ylabel("")
+            ax.set_title(f"Pie Chart of {col}")
+            plt.savefig(f"pie_{col}.png")
+            all_visuals.append(f"pie_{col}.png")
+            st.pyplot(fig)
+
     target = st.selectbox("🎯 Select Target Variable", df.columns)
     if target:
         X = df.drop(columns=[target])
@@ -132,12 +180,18 @@ if uploaded_file:
 
         @st.cache_resource(show_spinner="Training models...")
         def get_results(X, y, tune):
-            agent = AutoMLAgent(X, y, tune=tune)
-            results_df, best_info, X_sample = agent.run()
-            agent.save_best_model()
-            return agent, results_df, best_info, X_sample
+            from sklearn.ensemble import RandomForestClassifier
+            model = RandomForestClassifier()
+            X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+            model.fit(X_train, y_train)
+            score = model.score(X_test, y_test)
+            results_df = pd.DataFrame([{"Model": "RandomForest", "Score": score}])
+            best_info = {"Model": "RandomForest", "Score": score}
+            with open("best_model.pkl", "wb") as f:
+                pickle.dump(model, f)
+            return model, results_df, best_info, X_test
 
-        agent, results_df, best_info, X_sample = get_results(X, y, tune_model)
+        model, results_df, best_info, X_sample = get_results(X, y, tune_model)
 
         st.subheader("🏆 Model Leaderboard")
         st.dataframe(results_df)
@@ -146,7 +200,8 @@ if uploaded_file:
         st.subheader("📌 Feature Importance (SHAP)")
         if SHAP_AVAILABLE:
             try:
-                shap_values = agent.explain_model(X_sample[:50])
+                explainer = shap.Explainer(model, X_sample[:50])
+                shap_values = explainer(X_sample[:50])
                 shap.summary_plot(shap_values, X_sample[:50], show=False)
                 st.pyplot(plt.gcf())
             except Exception as e:
