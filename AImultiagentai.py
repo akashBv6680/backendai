@@ -28,9 +28,13 @@ from langchain.llms import Together
 from langchain.chains import LLMChain
 from langchain.prompts import PromptTemplate
 from langchain_community.document_loaders import DataFrameLoader
-from langchain.embeddings import TogetherEmbeddings
+# FIX: Changed import path for TogetherEmbeddings
+from langchain_together import TogetherEmbeddings # <--- CORRECTED IMPORT
 from langchain.vectorstores import FAISS
 from langchain.chains.Youtubeing import load_qa_chain
+from langchain_core.documents import Document # Added for creating custom documents in DatasetAgent
+
+# ... (rest of your code) ...
 
 # === Together AI ===
 together_api_keys = [
