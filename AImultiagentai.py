@@ -1,5 +1,3 @@
-
-
 # ✅ Enhanced Agentic AutoML with Chat, Explainability, Tuning, and PDF Export
 
 import streamlit as st
@@ -33,9 +31,8 @@ try:
     SHAP_AVAILABLE = True
 except ImportError:
     SHAP_AVAILABLE = False
-    
 
-# === Together AI ===
+# === Together AI Keys ===
 together_api_keys = [
     "tgp_v1_ecSsk1__FlO2mB_gAaaP2i-Affa6Dv8OCVngkWzBJUY",
     "tgp_v1_4hJBRX0XDlwnw_hhUnhP0e_lpI-u92Xhnqny2QIDAIM"
@@ -151,9 +148,12 @@ class AutoMLAgent:
 
     def explain_model(self, X_sample):
         if SHAP_AVAILABLE:
-            explainer = shap.Explainer(self.best_model, X_sample)
-            shap_values = explainer(X_sample)
-            return shap_values
+            try:
+                explainer = shap.Explainer(self.best_model, X_sample, check_additivity=False)
+                shap_values = explainer(X_sample)
+                return shap_values
+            except Exception as e:
+                raise RuntimeError(f"SHAP explanation failed: {e}")
         else:
             raise ImportError("SHAP not available")
 
