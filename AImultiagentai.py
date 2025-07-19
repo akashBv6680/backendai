@@ -40,10 +40,12 @@ try:
 except ImportError:
     LANGCHAIN_AVAILABLE = False
 
+from automl_agent import AutoMLAgent  # Make sure this file exists or adjust import path
+
 # === Together AI Keys ===
 together_api_keys = [
-    "tgp_v1_ecSsk1__FlO2mB_gAaaP2i-Affa6Dv8OCVngkWzBJUY",
-    "tgp_v1_4hJBRX0XDlwnw_hhUnhP0e_lpI-u92Xhnqny2QIDAIM"
+    st.secrets.get("TOGETHER_API_KEY_1", "tgp_v1_ecSsk1__FlO2mB_gAaaP2i-Affa6Dv8OCVngkWzBJUY"),
+    st.secrets.get("TOGETHER_API_KEY_2", "tgp_v1_4hJBRX0XDlwnw_hhUnhP0e_lpI-u92Xhnqny2QIDAIM")
 ]
 
 client_email = st.sidebar.text_input("📨 Enter Client Email")
