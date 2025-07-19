@@ -1,5 +1,3 @@
-# ✅ Enhanced Agentic AutoML with Chat, Explainability, Tuning, and PDF Export
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -9,11 +7,10 @@ import smtplib
 import seaborn as sns
 import matplotlib.pyplot as plt
 import os
-import base64
-from fpdf import FPDF
+
 from email.message import EmailMessage
-from sklearn.model_selection import train_test_split, GridSearchCV
-from sklearn.preprocessing import LabelEncoder, StandardScaler, PolynomialFeatures
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler, PolynomialFeatures
 from sklearn.metrics import accuracy_score, r2_score
 from sklearn.pipeline import make_pipeline
 from sklearn.linear_model import LinearRegression, Lasso, Ridge, ElasticNet, LogisticRegression
@@ -26,21 +23,66 @@ from sklearn.naive_bayes import GaussianNB, MultinomialNB, ComplementNB
 from imblearn.over_sampling import SMOTE
 import xgboost as xgb
 
-try:
-    import shap
-    SHAP_AVAILABLE = True
-except ImportError:
-    SHAP_AVAILABLE = False
+# === API Keys ===
+together_api_keys = [
+    "tgp_v1_ecSsk1__FlO2mB_gAaaP2i-Affa6Dv8OCVngkWzBJUY",
+    "tgp_v1_4hJBRX0XDlwnw_hhUnhP0e_lpI-u92Xhnqny2QIDAIM"
+]
 
-try:
-    import langchain
-    from langchain.chat_models import ChatOpenAI
-    from langchain.agents import initialize_agent, Tool
-    LANGCHAIN_AVAILABLE = True
-except ImportError:
-    LANGCHAIN_AVAILABLE = False
+client_email = st.sidebar.text_input("Enter Client Email")
 
-# === Agent Class ===
+# === Agent Prompt Handler ===
+def ask_agent(prompt, model, key=0, df_context=None):
+    full_prompt = prompt
+    if df_context is not None:
+        full_prompt = f"""
+You are a helpful AI agent. The user has uploaded a dataset with the following preview:
+
+{df_context.head(3).to_markdown()}
+
+Column types:
+{df_context.dtypes.to_string()}
+
+Now answer the following question about the dataset:
+{prompt}
+        """
+    response = requests.post(
+        "https://api.together.xyz/v1/chat/completions",
+        headers={"Authorization": f"Bearer {together_api_keys[key]}"},
+        json={
+            "model": model,
+            "messages": [{"role": "user", "content": full_prompt}],
+        }
+    )
+    if response.status_code == 200:
+        return response.json()["choices"][0]["message"]["content"]
+    return f"Error: {response.text}"
+
+def ask_data_scientist_agent(prompt, df_context=None):
+    return ask_agent(f"[DATA SCIENTIST] {prompt}", "mistralai/Mistral-7B-Instruct-v0.1", key=0, df_context=df_context)
+
+def ask_ml_engineer_agent(prompt, df_context=None):
+    return ask_agent(f"[ML ENGINEER] {prompt}", "mistralai/Mistral-7B-Instruct-v0.1", key=1, df_context=df_context)
+
+# === Email Sender ===
+def send_email_report(subject, body, to, attachment_paths=None):
+    msg = EmailMessage()
+    msg['Subject'] = subject
+    msg['From'] = st.secrets["EMAIL_ADDRESS"]
+    msg['To'] = to
+    msg.set_content(body)
+
+    if attachment_paths:
+        for path in attachment_paths:
+            with open(path, 'rb') as f:
+                img_data = f.read()
+            msg.add_attachment(img_data, maintype='image', subtype='png', filename=os.path.basename(path))
+
+    with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp:
+        smtp.login(st.secrets["EMAIL_ADDRESS"], st.secrets["EMAIL_PASSWORD"])
+        smtp.send_message(msg)
+
+# === AutoML Class ===
 class AutoMLAgent:
     def __init__(self, X, y):
         self.X_raw = X.copy()
@@ -127,6 +169,7 @@ class AutoMLAgent:
     def save_best_model(self):
         with open("best_model.pkl", "wb") as f:
             pickle.dump(self.best_model, f)
+
 # === Streamlit UI ===
 st.set_page_config(page_title="Agentic AutoML AI", layout="wide")
 st.title("🤖 Multi-Agent AutoML System with Email Intelligence")
@@ -193,6 +236,7 @@ if uploaded_file:
             all_visuals.append(f"pie_{col}.png")
             st.pyplot(fig)
 
+    # Email initial report
     problem_detected = df.isnull().sum().any() or df.select_dtypes(include=np.number).apply(lambda x: ((x - x.mean())/x.std()).abs().gt(3).sum()).sum() > 0
 
     if problem_detected and client_email:
@@ -245,3 +289,25 @@ Akash
 """
                 send_email_report("Final AutoML Model Report", model_summary, client_email)
                 st.info("📬 Final report emailed to client.")
+
+# === Multi-Agent Dataset-Aware Chat ===
+st.header("🧠 Multi-Agent AI Chat")
+if uploaded_file:
+    chat_agent = st.selectbox("👤 Select Agent", ["Data Scientist", "ML Engineer"])
+    chat_input = st.text_area("💬 Ask a dataset-specific question", placeholder="e.g. Which features are correlated with the target?")
+
+    if st.button("🔍 Ask Agent"):
+        if chat_input:
+            if chat_agent == "Data Scientist":
+                response = ask_data_scientist_agent(chat_input, df_context=df)
+            elif chat_agent == "ML Engineer":
+                response = ask_ml_engineer_agent(chat_input, df_context=df)
+            else:
+                response = "Unknown agent."
+
+            st.markdown("### 🤖 Agent Response")
+            st.write(response)
+        else:
+            st.warning("Please enter a question.")
+else:
+    st.info("Please upload a dataset first to interact with agents.")
